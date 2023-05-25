@@ -13,14 +13,17 @@
 #include <string.h>
 #include "config.h"
 #include "utils.h"
+#include "boromir_client.h"
 
 static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
 	struct boromir_client* client = (struct boromir_client*) arg;
 	if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
 		printf("sta start\n");
-		//xTaskCreate(connect_to_ap, "wifi_connect", 2048, client, tskIDLE_PRIORITY, NULL);
+		xTaskCreate(connect_to_ap, "wifi_connect", 2048, client, tskIDLE_PRIORITY, NULL);
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 		printf("sta disconnected\n");
+
+		remove_parent_conn(client);
 
 		wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*)event_data;
 		struct bad_conn* bc = (struct bad_conn*)malloc(sizeof(struct bad_conn));
@@ -36,10 +39,19 @@ static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_
 		printf("ap start\n");
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
 		printf("sta connected to ap\n");
+
+		wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*)event_data;
+		set_child_conn(client, event->mac, event->aid);
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STADISCONNECTED) {
 		printf("sta disconnected from ap\n");
+
+		wifi_event_ap_stadisconnected_t* event = (wifi_event_ap_stadisconnected_t*)event_data;
+		remove_child_conn(client, event->mac);
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
 		printf("sta connected\n");
+
+		wifi_event_sta_connected_t* event = (wifi_event_sta_connected_t*)event_data;
+		set_parent_conn(client, event->ssid, event->ssid_len);
 	}
 }
 

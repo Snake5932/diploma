@@ -9,12 +9,5 @@
 
 void app_main() {
     struct boromir_client* client = new_boromir_client(1);
-
     start_client(client);
-
-    vTaskDelay(500);
-    for(;;) {
-    	send_msg(client, (char[]){'b', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a'}, 1, NULL);
-    	vTaskDelay(500);
-    }
 }
