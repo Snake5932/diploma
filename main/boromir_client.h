@@ -16,6 +16,18 @@ enum message_type {
 	BEACON_ANSW
 };
 
+enum connection_status {
+	ESTABLISHED,
+	//статусы ap для sta
+	BROADCAST_PREPARED,
+	BROADCAST_SENT,
+	CONNECT_RECEIVED,
+	//статусы sta по отношению к ap
+	WIFI_CONNECTED,
+	BROADCAST_RECEIVED,
+	CONNECT_SENT
+};
+
 struct message {
 	enum message_type type;
 	char must_be_answered;
@@ -52,7 +64,16 @@ struct msg {
 	char* msg;
 };
 
-struct connection;
+struct connection {
+	uint8_t ssid[32];
+	uint8_t ssid_len;
+	struct sockaddr_in cliaddr;
+	uint8_t mac[6];
+	uint16_t aid;
+	uint32_t timestamp;
+	uint32_t roles;
+	enum connection_status status;
+};
 
 struct boromir_client* new_boromir_client(uint32_t roles);
 

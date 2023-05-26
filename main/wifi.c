@@ -40,6 +40,7 @@ static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
 		printf("sta connected to ap\n");
 
+		vTaskDelay(100);
 		wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*)event_data;
 		set_child_conn(client, event->mac, event->aid);
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STADISCONNECTED) {
@@ -176,7 +177,7 @@ esp_err_t wifi_init(struct boromir_client* client) {
 
 	ESP_ERROR_CHECK(esp_wifi_start());
 
-	ESP_ERROR_CHECK(esp_wifi_set_inactive_time(ESP_IF_WIFI_AP, 20));
+	//ESP_ERROR_CHECK(esp_wifi_set_inactive_time(ESP_IF_WIFI_AP, 20));
 
 	return ESP_OK;
 }

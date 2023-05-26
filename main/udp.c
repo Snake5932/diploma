@@ -19,6 +19,12 @@ void udp_sender(void *pvParameters) {
 	for(;;) {
 		xStatus = xQueueReceive(client->writing_queue, &message, portMAX_DELAY);
 		if (xStatus == pdTRUE) {
+
+			for (int i = 0; i < 50; i++) {
+				printf("%x ", message.msg[i]);
+			}
+			printf("\n");
+
 			sendto(client->sockfd, message.msg, 256,  0, (struct sockaddr*)&message.addr,  sizeof(message.addr));
 			free(message.msg);
 		}
@@ -34,6 +40,7 @@ void udp_receiver(void *pvParameters) {
 	    recvfrom(client->sockfd, buf, sizeof(buf), 0, NULL, NULL);
 	    struct message msg;
 	    parse_message(buf, &msg);
+	    printf("%d\n", msg.type);
 	    if (!msg.err) {
 	    	//TODO: подумать о том, чтобы создавать отдельные таски
 	    	if (msg.type == BROADCAST) {

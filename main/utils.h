@@ -2,6 +2,7 @@
 #define UTILS
 
 #include "stdint.h"
+#include "boromir_client.h"
 
 struct bad_conn {
 	uint8_t ssid[32];
@@ -18,5 +19,7 @@ char cmp_mac(uint8_t *mac1, uint8_t* mac2);
 char cmp_slices(uint8_t *s1, uint8_t len1, uint8_t* s2, uint8_t len2);
 
 char cmp_order(uint8_t *o1, uint8_t len1, uint8_t* o2, uint8_t len2);
+
+char has_conn(struct connection** conns, uint8_t* mac);
 
 #endif

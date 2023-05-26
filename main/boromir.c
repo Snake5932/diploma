@@ -49,7 +49,7 @@ void parse_connect(char* msg, struct message* res) {
 	memcpy(res->sender_ssid, &msg[2], res->ssid_len);
 	uint8_t cur_pos = 2 + res->ssid_len;
 	memcpy(res->sender_mac, &msg[cur_pos], 6);
-	cur_pos = cur_pos + 6;
+	cur_pos = cur_pos + 8;
 	memcpy(&res->roles, &msg[cur_pos], 4);
 	cur_pos = cur_pos + 4;
 	memcpy(&res->ip, &msg[cur_pos], 4);
@@ -139,6 +139,7 @@ char* make_connect(struct boromir_client* client) {
 	tcpip_adapter_ip_info_t ip_info;
 	tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
 	memcpy(&msg[cur_pos], &ip_info.ip.addr, 4);
+	printf("%u\n", ip_info.ip.addr);
 	//остальные байты не используются
 	return msg;
 }
@@ -152,7 +153,7 @@ char* make_established(struct boromir_client* client) {
 	//длина и ssid отправителя
 	msg[1] = client->ssid_len;
 	memcpy(&msg[2], client->client_ssid, client->ssid_len);
-	uint8_t cur_pos = 2 + client->client_ssid;
+	uint8_t cur_pos = 2 + client->ssid_len;
 	//id предлагаемой сети
 	memcpy(&msg[cur_pos], client->network_id, 4);
 	//больше ничего не нужно, так как стороны уже получили всю необходимую информацию

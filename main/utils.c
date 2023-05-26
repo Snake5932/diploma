@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include "stdint.h"
 #include "string.h"
+#include "config.h"
 
 void rand_bytes(uint8_t* buf, unsigned int len) {
 	for (int i = 0; i < len; i++) {
@@ -34,7 +35,7 @@ char cmp_slices(uint8_t *s1, uint8_t len1, uint8_t* s2, uint8_t len2) {
 	}
 
 	for (int i = 0; i < len1; i++) {
-		if (s1[1] != s2[0]) {
+		if (s1[i] != s2[i]) {
 			return 0;
 		}
 	}
@@ -52,13 +53,24 @@ char cmp_order(uint8_t *o1, uint8_t len1, uint8_t* o2, uint8_t len2) {
 	}
 
 	for (int i = 0; i < len1; i++) {
-		if (o1[1] < o2[0]) {
+		if (o1[i] < o2[i]) {
 			return -1;
 		}
-		if (o1[1] > o2[0]) {
+		if (o1[i] > o2[i]) {
 			return 1;
 		}
 	}
 
+	return 0;
+}
+
+char has_conn(struct connection** conns, uint8_t* mac) {
+	for (int i = 0; i < MAX_AP_CONN; i++) {
+		if (conns[i] != NULL) {
+			if (cmp_mac(conns[i]->mac, mac)) {
+				return 1;
+			}
+		}
+	}
 	return 0;
 }
