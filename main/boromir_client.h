@@ -8,6 +8,27 @@
 #include "queue.h"
 #include "config.h"
 
+enum message_type {
+	BROADCAST,
+	CONNECT,
+	ESTABLISHING,
+	BEACON,
+	BEACON_ANSW
+};
+
+struct message {
+	enum message_type type;
+	char must_be_answered;
+	uint8_t sender_ssid[32];
+	uint8_t ssid_len;
+	uint8_t sender_mac[6];
+	uint8_t order;
+	uint8_t network_id[4];
+	uint32_t roles;
+	uint32_t ip;
+	char err;
+};
+
 struct boromir_client {
 	uint8_t client_ssid[32];
 	uint8_t ssid_len;
@@ -52,5 +73,15 @@ void remove_parent_conn(struct boromir_client* client);
 void set_parent_conn(struct boromir_client* client, uint8_t* ssid, uint8_t ssid_len);
 
 void connection_manager(void *pvParameters);
+
+void process_broadcast(struct boromir_client* client, struct message* msg);
+
+void process_connect(struct boromir_client* client, struct message* msg);
+
+void process_establishing(struct boromir_client* client, struct message* msg);
+
+void process_beacon(struct boromir_client* client, struct message* msg);
+
+void process_beacon_answ(struct boromir_client* client, struct message* msg);
 
 #endif

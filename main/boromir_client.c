@@ -15,6 +15,7 @@ enum connection_status {
 	CONNECT_RECEIVED,
 	//статусы sta по отношению к ap
 	WIFI_CONNECTED,
+	BROADCAST_RECEIVED,
 	CONNECT_SENT
 };
 
@@ -52,7 +53,7 @@ struct boromir_client* new_boromir_client(uint32_t roles) {
 	client->order = ORDER;
 	client->broadcast_addr.sin_family = AF_INET;
 	client->broadcast_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
-	client->broadcast_addr.sin_port = PORT;
+	client->broadcast_addr.sin_port = htons(PORT);
 	rand_bytes(client->network_id, 4);
 	return client;
 }
@@ -101,7 +102,7 @@ void connection_manager(void *pvParameters) {
 		uint32_t now = (uint32_t)xTaskGetTickCount();
 		for (int i = 0; i < MAX_AP_CONN; i++) {
 			if (client->children_conns[i] != NULL) {
-				if (now - client->children_conns[i]->timestamp > 21000) {
+				if ((now - client->children_conns[i]->timestamp)/portTICK_RATE_MS > 21000) {
 					esp_wifi_deauth_sta(client->children_conns[i]->aid);
 					printf("deauthenticated sta as unresponsive");
 				} else {
@@ -109,8 +110,9 @@ void connection_manager(void *pvParameters) {
 						struct msg message = {.addr = client->children_conns[i]->cliaddr, make_beacon(client)};
 						if (xQueueSendToBack(client->writing_queue, &message, 2000) == pdTRUE) {
 							printf("sent beacon");
+						} else {
+							free(message.msg);
 						}
-						free(message.msg);
 					} else if (client->children_conns[i]->status == BROADCAST_PREPARED) {
 						if (!client->prohibit_conn) {
 							struct msg message = {.addr = client->broadcast_addr, make_broadcast(client)};
@@ -118,8 +120,9 @@ void connection_manager(void *pvParameters) {
 								client->children_conns[i]->status = BROADCAST_SENT;
 								client->children_conns[i]->timestamp = (uint32_t)xTaskGetTickCount();
 								printf("broadcast sent");
+							} else {
+								free(message.msg);
 							}
-							free(message.msg);
 						}
 					} else if (client->children_conns[i]->status == CONNECT_RECEIVED) {
 						if (!client->prohibit_conn) {
@@ -128,8 +131,9 @@ void connection_manager(void *pvParameters) {
 								client->children_conns[i]->status = ESTABLISHED;
 								client->children_conns[i]->timestamp = (uint32_t)xTaskGetTickCount();
 								printf("connection established");
+							} else {
+								free(message.msg);
 							}
-							free(message.msg);
 						}
 					}
 				}
@@ -141,9 +145,15 @@ void connection_manager(void *pvParameters) {
 				esp_wifi_disconnect();
 				printf("disconnected from ap");
 			} else {
-				if (client->parent_conn->status == ESTABLISHED) {
-					esp_wifi_disconnect();
-					printf("disconnected from ap");
+				if (client->parent_conn->status == BROADCAST_RECEIVED) {
+					struct msg message = {.addr = client->broadcast_addr, make_connect(client)};
+					if (xQueueSendToFront(client->writing_queue, &message, 2000) == pdTRUE) {
+						client->parent_conn->status = CONNECT_SENT;
+						client->parent_conn->timestamp = (uint32_t)xTaskGetTickCount();
+						printf("connect sent");
+					} else {
+						free(message.msg);
+					}
 				}
 			}
 		}
@@ -171,8 +181,9 @@ void set_child_conn(struct boromir_client* client, uint8_t mac[6], uint16_t aid)
 				if (xQueueSendToFront(client->writing_queue, &message, 2000) == pdTRUE) {
 					conn->status = BROADCAST_SENT;
 					printf("broadcast sent");
+				} else {
+					free(message.msg);
 				}
-				free(message.msg);
 			}
 
 			conn->timestamp = (uint32_t)xTaskGetTickCount();
@@ -213,5 +224,129 @@ void remove_parent_conn(struct boromir_client* client) {
 	printf("deleting parent");
 	free(client->parent_conn);
 	client->parent_conn = NULL;
+	xSemaphoreGive(client->conn_mutex);
+}
+
+void process_broadcast(struct boromir_client* client, struct message* msg) {
+	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
+	printf("processing broadcast");
+	if (client->parent_conn != NULL &&
+		cmp_slices(client->parent_conn->ssid, client->parent_conn->ssid_len,
+			msg->sender_ssid, msg->ssid_len)) {
+		if (client->parent_conn->status == WIFI_CONNECTED) {
+			if (!cmp_slices(client->network_id, 4, msg->network_id, 4)) {
+				if (cmp_order(&client->order, 1, &msg->order, 1) > 0) {
+
+					client->parent_conn->cliaddr.sin_family = AF_INET;
+					client->parent_conn->cliaddr.sin_addr.s_addr = msg->ip;
+					client->parent_conn->cliaddr.sin_port = htons(PORT);
+
+					client->parent_conn->status = BROADCAST_RECEIVED;
+
+					client->prohibit_conn = 1;
+
+					struct msg message = {.addr = client->parent_conn->cliaddr, make_connect(client)};
+					if (xQueueSendToFront(client->writing_queue, &message, 2000) == pdTRUE) {
+						client->parent_conn->status = CONNECT_SENT;
+						printf("connect sent");
+					} else {
+						free(message.msg);
+					}
+
+					client->parent_conn->timestamp = (uint32_t)xTaskGetTickCount();
+
+				} else {
+					//TODO: disconnect?
+				}
+			} else {
+				//TODO: disconnect?
+			}
+		}
+	}
+	xSemaphoreGive(client->conn_mutex);
+}
+
+void process_connect(struct boromir_client* client, struct message* msg) {
+	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
+	printf("processing connect");
+	for (int i = 0; i < MAX_AP_CONN; i++) {
+		if (client->children_conns[i] != NULL && cmp_mac(client->children_conns[i]->mac, msg->sender_mac)) {
+			if (client->children_conns[i]->status == BROADCAST_SENT) {
+
+				client->children_conns[i]->cliaddr.sin_family = AF_INET;
+				client->children_conns[i]->cliaddr.sin_addr.s_addr = msg->ip;
+				client->children_conns[i]->cliaddr.sin_port = htons(PORT);
+
+				client->children_conns[i]->status = CONNECT_RECEIVED;
+				client->children_conns[i]->roles = msg->roles;
+
+				client->children_conns[i]->ssid_len = msg->ssid_len;
+				memcpy(client->children_conns[i]->ssid, msg->sender_ssid, msg->ssid_len);
+
+				if (!client->prohibit_conn) {
+					struct msg message = {.addr = client->children_conns[i]->cliaddr, make_established(client)};
+					if (xQueueSendToFront(client->writing_queue, &message, 2000) == pdTRUE) {
+						client->children_conns[i]->status = ESTABLISHED;
+						printf("broadcast sent");
+					} else {
+						free(message.msg);
+					}
+				}
+				client->children_conns[i]->timestamp = (uint32_t)xTaskGetTickCount();
+			}
+			break;
+		}
+	}
+	xSemaphoreGive(client->conn_mutex);
+}
+
+void process_establishing(struct boromir_client* client, struct message* msg) {
+	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
+	printf("processing establishing");
+	if (client->parent_conn != NULL &&
+		cmp_slices(client->parent_conn->ssid, client->parent_conn->ssid_len,
+			msg->sender_ssid, msg->ssid_len)) {
+		if (client->parent_conn->status == CONNECT_SENT) {
+			printf("conn to parent established");
+			client->parent_conn->timestamp = (uint32_t)xTaskGetTickCount();
+			memcpy(client->network_id, msg->network_id, 4);
+			client->prohibit_conn = 0;
+		}
+	}
+	xSemaphoreGive(client->conn_mutex);
+}
+
+void process_beacon_answ(struct boromir_client* client, struct message* msg) {
+	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
+	printf("processing beacon");
+	for (int i = 0; i < MAX_AP_CONN; i++) {
+		if (client->children_conns[i] != NULL &&
+				cmp_slices(client->children_conns[i]->ssid, client->children_conns[i]->ssid_len,
+						msg->sender_ssid, msg->ssid_len)) {
+			if (client->children_conns[i]->status == ESTABLISHED) {
+				client->children_conns[i]->timestamp = (uint32_t)xTaskGetTickCount();
+			}
+			break;
+		}
+	}
+	xSemaphoreGive(client->conn_mutex);
+}
+
+void process_beacon(struct boromir_client* client, struct message* msg) {
+	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
+	printf("processing beacon");
+	if (client->parent_conn != NULL &&
+			cmp_slices(client->parent_conn->ssid, client->parent_conn->ssid_len,
+					msg->sender_ssid, msg->ssid_len)) {
+		if (client->parent_conn->status == ESTABLISHED) {
+			struct msg message = {.addr = client->parent_conn->cliaddr, make_beacon(client)};
+			if (xQueueSendToBack(client->writing_queue, &message, 2000) == pdTRUE) {
+				printf("sent beacon answ");
+			} else {
+				free(message.msg);
+			}
+			client->parent_conn->timestamp = (uint32_t)xTaskGetTickCount();
+		}
+	}
 	xSemaphoreGive(client->conn_mutex);
 }
