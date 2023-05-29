@@ -99,6 +99,8 @@ struct boromir_client* new_boromir_client(uint32_t roles) {
 	client->ssid_len = strlen(SSID);
 	memcpy(client->client_ssid, SSID, client->ssid_len);
 	client->critical_msg = hashmap_create();
+	client->event_handler = NULL;
+	client->usr = NULL;
 	return client;
 }
 
@@ -133,10 +135,6 @@ void start_client(struct boromir_client* client) {
 
 	xTaskCreate(udp_receiver, "udp_receiver", 2048, client, tskIDLE_PRIORITY, NULL);
 	xTaskCreate(udp_sender, "udp_sender", 2048, client, tskIDLE_PRIORITY, NULL);
-}
-
-void send_msg(struct boromir_client* client, char* data, uint8_t data_len, uint32_t role, char* dest_name, int dest_name_len) {
-
 }
 
 void connection_manager(void *pvParameters) {
@@ -210,8 +208,6 @@ void connection_manager(void *pvParameters) {
 	vTaskDelete(NULL);
 }
 
-//TODO: не забыть про сообщения установки соединения и служебные сообщения по удалению ролей и пр.
-//TODO: запрет на новые подключения во время подключения станции
 void set_child_conn(struct boromir_client* client, uint8_t mac[6], uint16_t aid) {
 	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
 	for (int i = 0; i < MAX_AP_CONN; i++) {
@@ -555,8 +551,6 @@ void process_net_id_upd(struct boromir_client* client, struct message* msg) {
 	xSemaphoreGive(client->conn_mutex);
 }
 
-//TODO: не отправляется подтверждение ни здесь, ни в net id upd
-
 void process_role_upd(struct boromir_client* client, struct message* msg) {
 	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
 	printf("processing role upd from %.9s\n", msg->sender_ssid);
@@ -610,4 +604,120 @@ void process_role_upd(struct boromir_client* client, struct message* msg) {
 	}
 
 	xSemaphoreGive(client->conn_mutex);
+}
+
+void process_basic_role_v(struct boromir_client* client, struct message* msg) {
+	printf("processing basic role v from %.9s\n", msg->sender_ssid);
+	struct handler_data* data = (struct handler_data*)malloc(sizeof(struct handler_data));
+	data->usr = client->usr;
+	data->event_data = msg->data;
+	data->data_len = msg->data_len;
+	data->event_handler = client->event_handler;
+
+	char id[5];
+	rand_char(id, 4);
+	id[4] = '\0';
+
+	if ((client->roles & msg->roles) != 0) {
+		xTaskCreate(boromir_event_handler_caller, id, 2048, data, tskIDLE_PRIORITY, NULL);
+		return;
+	}
+
+	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
+
+	struct connection** proposals = (struct connection**)malloc((MAX_AP_CONN) * sizeof(struct connection*));
+	int ind = 0;
+	struct sockaddr_in addr;
+
+	for (int i = 0; i < MAX_AP_CONN; i++) {
+		if (client->children_conns[i] != NULL && client->children_conns[i]->status == ESTABLISHED &&
+				!cmp_slices(client->children_conns[i]->ssid, client->children_conns[i]->ssid_len,
+										msg->sender_ssid, msg->ssid_len) &&
+				(client->children_conns[i]->roles & msg->roles) != 0) {
+			proposals[ind] = client->children_conns[i];
+			ind = ind + 1;
+		}
+	}
+
+	if (ind != 0) {
+		int num = rand() % ind;
+		addr = proposals[num]->cliaddr;
+		printf("chosen for resending: %.9s\n", proposals[num]->ssid);
+	} else if (client->parent_conn != NULL &&
+			client->parent_conn->status == ESTABLISHED &&
+			!cmp_slices(client->parent_conn->ssid, client->parent_conn->ssid_len,
+									msg->sender_ssid, msg->ssid_len)) {
+		addr = client->parent_conn->cliaddr;
+		printf("chosen parent for resending: %.9s\n", client->parent_conn->ssid);
+		ind = 1;
+	}
+	xSemaphoreGive(client->conn_mutex);
+
+	if (ind != 0) {
+		struct msg message = {.addr = addr, .msg = make_basic_role_v(msg->sender_ssid, msg->ssid_len, msg->roles, msg->data, msg->data_len)};
+		free(msg->data);
+		if (xQueueSendToBack(client->writing_queue, &message, 2000) != pdTRUE) {
+			free(message.msg);
+		} else {
+			printf("sent basic message\n");
+		}
+	} else {
+		printf("no proper dest for basic role v\n");
+	}
+
+	free(proposals);
+}
+
+void send_msg(struct boromir_client* client, uint8_t* data, uint8_t data_len, uint32_t role, char* dest_name, int dest_name_len) {
+	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
+
+	printf("preparing to send basic\n");
+
+	struct connection** proposals = (struct connection**)malloc((MAX_AP_CONN) * sizeof(struct connection*));
+	int ind = 0;
+	struct sockaddr_in addr;
+
+	for (int i = 0; i < MAX_AP_CONN; i++) {
+		if (client->children_conns[i] != NULL && client->children_conns[i]->status == ESTABLISHED &&
+				(client->children_conns[i]->roles & role) != 0) {
+			proposals[ind] = client->children_conns[i];
+			ind = ind + 1;
+		}
+	}
+
+	if (ind != 0) {
+		int num = rand() % ind;
+		addr = proposals[num]->cliaddr;
+		printf("chosen: %.9s\n", proposals[num]->ssid);
+	} else if (client->parent_conn != NULL && client->parent_conn->status == ESTABLISHED) {
+		addr = client->parent_conn->cliaddr;
+		printf("chosen parent: %.9s\n", client->parent_conn->ssid);
+		ind = 1;
+	}
+	xSemaphoreGive(client->conn_mutex);
+
+	if (ind != 0) {
+		struct msg message = {.addr = addr, .msg = make_basic_role_v(client->client_ssid, client->ssid_len, role, data, data_len)};
+		if (xQueueSendToBack(client->writing_queue, &message, 2000) != pdTRUE) {
+			free(message.msg);
+		} else {
+			printf("sent basic message\n");
+		}
+	} else {
+		printf("no proper dest for basic role v\n");
+	}
+
+	free(proposals);
+}
+
+void set_callback(struct boromir_client* client, boromir_event_handler_t event_handler, void* usr) {
+	client->event_handler = event_handler;
+	client->usr = usr;
+}
+
+void boromir_event_handler_caller(void *pvParameters) {
+	struct handler_data* data = (struct handler_data*) pvParameters;
+	data->event_handler(data->usr, data->event_data, data->data_len);
+	free(data);
+	vTaskDelete(NULL);
 }

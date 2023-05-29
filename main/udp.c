@@ -59,6 +59,10 @@ void udp_receiver(void *pvParameters) {
 	    			process_net_id_upd(client, &msg);
 	    		} else if (msg.type == RECV_ANSW) {
 	    			process_recv_answ(client, &msg);
+	    		} else if (msg.type == BASIC_ROLE_V) {
+	    			process_basic_role_v(client, &msg);
+	    		} else {
+	    			printf("unknown message type\n");
 	    		}
 	    	} else {
 	    		printf("error while parsing\n");

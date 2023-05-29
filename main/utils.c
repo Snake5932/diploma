@@ -10,6 +10,12 @@ void rand_bytes(uint8_t* buf, unsigned int len) {
 	}
 }
 
+void rand_char(char* buf, unsigned int len) {
+	for (int i = 0; i < len; i++) {
+		buf[i] = (rand() % (122 - 97 + 1)) + 97;
+	}
+}
+
 char is_bad_conn(uint8_t ssid[33], void** bad_conns, int bad_conn_num) {
 	for (int i = 0; i < bad_conn_num; i++) {
 		struct bad_conn* bc = (struct bad_conn*)bad_conns[i];

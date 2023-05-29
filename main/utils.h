@@ -14,6 +14,8 @@ char is_bad_conn(uint8_t ssid[33], void** bad_conns, int bad_conn_num);
 
 void rand_bytes(uint8_t* buf, unsigned int len);
 
+void rand_char(char* buf, unsigned int len);
+
 char cmp_mac(uint8_t *mac1, uint8_t* mac2);
 
 char cmp_slices(uint8_t *s1, uint8_t len1, uint8_t* s2, uint8_t len2);

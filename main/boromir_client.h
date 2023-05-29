@@ -9,6 +9,8 @@
 #include "config.h"
 #include "map.h"
 
+typedef void (*boromir_event_handler_t)(void* usr, void* event_data, uint8_t data_len);
+
 enum message_type {
 	BROADCAST,
 	CONNECT,
@@ -17,7 +19,8 @@ enum message_type {
 	BEACON_ANSW,
 	ROLE_UPD,
 	NET_ID_UPD,
-	RECV_ANSW
+	RECV_ANSW,
+	BASIC_ROLE_V
 };
 
 enum connection_status {
@@ -44,6 +47,8 @@ struct message {
 	uint32_t roles;
 	uint32_t ip;
 	uint8_t msg_id[4];
+	uint8_t* data;
+	uint8_t data_len;
 	char err;
 };
 
@@ -65,6 +70,8 @@ struct boromir_client {
 	struct connection* parent_conn;
 	uint8_t order;
 	hashmap* critical_msg;
+	boromir_event_handler_t event_handler;
+	void* usr;
 };
 
 struct msg {
@@ -86,6 +93,15 @@ struct connection {
 	enum connection_status status;
 };
 
+struct handler_data {
+	void* usr;
+	void* event_data;
+	uint8_t data_len;
+	boromir_event_handler_t event_handler;
+};
+
+void boromir_event_handler_caller(void *pvParameters);
+
 void resend_critical(void* key, size_t ksize, uintptr_t value, void* usr);
 
 struct boromir_client* new_boromir_client(uint32_t roles);
@@ -93,10 +109,6 @@ struct boromir_client* new_boromir_client(uint32_t roles);
 void free_boromir_client(struct boromir_client* client);
 
 void start_client(struct boromir_client* client);
-
-void send_msg(struct boromir_client* client, char* data, uint8_t data_len, uint32_t role, char* dest_name, int dest_name_len);
-
-void set_callback();
 
 void remove_child_conn(struct boromir_client* client, uint8_t mac[6]);
 
@@ -123,5 +135,11 @@ void process_recv_answ(struct boromir_client* client, struct message* msg);
 void process_net_id_upd(struct boromir_client* client, struct message* msg);
 
 void process_role_upd(struct boromir_client* client, struct message* msg);
+
+void process_basic_role_v(struct boromir_client* client, struct message* msg);
+
+void send_msg(struct boromir_client* client, uint8_t* data, uint8_t data_len, uint32_t role, char* dest_name, int dest_name_len);
+
+void set_callback(struct boromir_client* client, boromir_event_handler_t event_handler, void* usr);
 
 #endif
