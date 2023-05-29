@@ -44,7 +44,7 @@ char cmp_slices(uint8_t *s1, uint8_t len1, uint8_t* s2, uint8_t len2) {
 }
 
 //-1 первый меньше второго, 1 первый больше второго, 0 равны
-char cmp_order(uint8_t *o1, uint8_t len1, uint8_t* o2, uint8_t len2) {
+char cmp_order(uint8_t* o1, uint8_t len1, uint8_t* o2, uint8_t len2) {
 	if (len1 < len2) {
 		return -1;
 	}
@@ -73,4 +73,11 @@ char has_conn(struct connection** conns, uint8_t* mac) {
 		}
 	}
 	return 0;
+}
+
+
+void free_map_entry(void* key, size_t ksize, uintptr_t value, void* usr)
+{
+	free((void*)value);
+	free(key);
 }

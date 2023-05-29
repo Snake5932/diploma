@@ -8,20 +8,82 @@
 #include "boromir.h"
 #include <stdlib.h>
 
+void resend_critical(void* key, size_t ksize, uintptr_t value, void* usr) {
+	struct boromir_client* client = (struct boromir_client*)usr;
+	struct msg* message = (struct msg*)value;
+
+	if (message->type == NET_ID_UPD) {
+		int ind = -1;
+		for (int i = 0; i < MAX_AP_CONN; i++) {
+			if (client->children_conns[i] != NULL && client->children_conns[i]->status == ESTABLISHED &&
+					cmp_slices(client->children_conns[i]->ssid, client->children_conns[i]->ssid_len,
+							message->dest_ssid, message->ssid_len)) {
+				if (client->children_conns[i]->status == ESTABLISHED) {
+					ind = i;
+				}
+				break;
+			}
+		}
+
+		if (ind != -1) {
+			printf("resending net_id_upd\n");
+			free(message);
+			struct msg* new_message = (struct msg*)malloc(sizeof(struct msg));
+			new_message->addr = client->children_conns[ind]->cliaddr;
+			memcpy(new_message->dest_ssid, client->children_conns[ind]->ssid, client->children_conns[ind]->ssid_len);
+			new_message->ssid_len = client->children_conns[ind]->ssid_len;
+			new_message->type = NET_ID_UPD;
+			new_message->msg = make_net_id_update(client, key);
+			if (xQueueSendToFront(client->writing_queue, new_message, 2000) != pdTRUE) {
+				free(new_message->msg);
+			}
+			hashmap_set(client->critical_msg, key, 4, (uintptr_t)(void*)new_message);
+		} else {
+			hashmap_remove_free(client->critical_msg, key, 4, free_map_entry, NULL);
+		}
+	} else if (message->type == ROLE_UPD) {
+		if (client->parent_conn != NULL && client->parent_conn->status == ESTABLISHED &&
+				cmp_slices(client->parent_conn->ssid, client->parent_conn->ssid_len, message->dest_ssid, message->ssid_len)) {
+			printf("resending role_upd\n");
+			free(message);
+			struct msg* new_message = (struct msg*)malloc(sizeof(struct msg));
+			new_message->addr = client->parent_conn->cliaddr;
+			memcpy(new_message->dest_ssid, client->parent_conn->ssid, client->parent_conn->ssid_len);
+			new_message->ssid_len = client->parent_conn->ssid_len;
+			new_message->type = ROLE_UPD;
+			new_message->msg = make_role_update(client, key);
+			if (xQueueSendToFront(client->writing_queue, new_message, 2000) != pdTRUE) {
+				free(new_message->msg);
+			}
+			hashmap_set(client->critical_msg, key, 4, (uintptr_t)(void*)new_message);
+		} else {
+			hashmap_remove_free(client->critical_msg, key, 4, free_map_entry, NULL);
+		}
+	} else {
+		printf("found smth else\n");
+//		if (xQueueSendToFront(client->writing_queue, &message, 2000) != pdTRUE) {
+//			free(new_message->msg);
+//		}
+//		hashmap_set(client->critical_msg, key, 4, (uintptr_t)(void*)new_message);
+	}
+}
+
 void free_boromir_client(struct boromir_client* client) {
 	for (int i = 0; i < MAX_AP_CONN; i++) {
 			free(client->children_conns[i]);
 	}
 	free(client->parent_conn);
 	free_queue(client->bad_conns);
+	hashmap_free(client->critical_msg);
 	free(client);
 }
 
 struct boromir_client* new_boromir_client(uint32_t roles) {
-	srand(24664347);
+	srand(RAND_SEED);
 	struct boromir_client* client = (struct boromir_client*)malloc(sizeof(struct boromir_client));
 	client->prohibit_conn = 0;
 	client->roles = roles;
+	client->tree_roles = roles;
 	client->writing_queue = xQueueCreate(50, sizeof(struct msg));
 	client->bad_conns = init_queue(5);
 	client->conn_mutex = xSemaphoreCreateMutex();
@@ -31,11 +93,12 @@ struct boromir_client* new_boromir_client(uint32_t roles) {
 	client->parent_conn = NULL;
 	client->order = ORDER;
 	client->broadcast_addr.sin_family = AF_INET;
-	client->broadcast_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
+	client->broadcast_addr.sin_addr.s_addr = inet_addr(BROADCAST_IP);
 	client->broadcast_addr.sin_port = htons(PORT);
 	rand_bytes(client->network_id, 4);
 	client->ssid_len = strlen(SSID);
 	memcpy(client->client_ssid, SSID, client->ssid_len);
+	client->critical_msg = hashmap_create();
 	return client;
 }
 
@@ -88,7 +151,7 @@ void connection_manager(void *pvParameters) {
 					printf("deauthenticated sta as unresponsive\n");
 				} else {
 					if (client->children_conns[i]->status == ESTABLISHED) {
-						struct msg message = {.addr = client->children_conns[i]->cliaddr, make_beacon(client)};
+						struct msg message = {.addr = client->children_conns[i]->cliaddr, .msg = make_beacon(client)};
 						if (xQueueSendToBack(client->writing_queue, &message, 2000) == pdTRUE) {
 							printf("sent beacon\n");
 						} else {
@@ -96,7 +159,7 @@ void connection_manager(void *pvParameters) {
 						}
 					} else if (client->children_conns[i]->status == BROADCAST_PREPARED) {
 						if (!client->prohibit_conn) {
-							struct msg message = {.addr = client->broadcast_addr, make_broadcast(client)};
+							struct msg message = {.addr = client->broadcast_addr, .msg = make_broadcast(client)};
 							if (xQueueSendToFront(client->writing_queue, &message, 2000) == pdTRUE) {
 								client->children_conns[i]->status = BROADCAST_SENT;
 								client->children_conns[i]->timestamp = (uint32_t)xTaskGetTickCount();
@@ -107,7 +170,7 @@ void connection_manager(void *pvParameters) {
 						}
 					} else if (client->children_conns[i]->status == CONNECT_RECEIVED) {
 						if (!client->prohibit_conn) {
-							struct msg message = {.addr = client->broadcast_addr, make_established(client)};
+							struct msg message = {.addr = client->broadcast_addr, .msg = make_established(client)};
 							if (xQueueSendToFront(client->writing_queue, &message, 2000) == pdTRUE) {
 								client->children_conns[i]->status = ESTABLISHED;
 								client->children_conns[i]->timestamp = (uint32_t)xTaskGetTickCount();
@@ -123,11 +186,11 @@ void connection_manager(void *pvParameters) {
 
 		if (client->parent_conn != NULL) {
 			if ((now - client->parent_conn->timestamp)/portTICK_RATE_MS > 300) {
+				printf("disconnected from ap as unresponsive\n");
 				esp_wifi_disconnect();
-				printf("disconnected from ap\n");
 			} else {
 				if (client->parent_conn->status == BROADCAST_RECEIVED) {
-					struct msg message = {.addr = client->broadcast_addr, make_connect(client)};
+					struct msg message = {.addr = client->broadcast_addr, .msg = make_connect(client)};
 					if (xQueueSendToFront(client->writing_queue, &message, 2000) == pdTRUE) {
 						client->parent_conn->status = CONNECT_SENT;
 						client->parent_conn->timestamp = (uint32_t)xTaskGetTickCount();
@@ -138,6 +201,8 @@ void connection_manager(void *pvParameters) {
 				}
 			}
 		}
+
+		hashmap_iterate(client->critical_msg, resend_critical, client);
 
 		xSemaphoreGive(client->conn_mutex);
 		vTaskDelay(10000/portTICK_RATE_MS);
@@ -158,7 +223,7 @@ void set_child_conn(struct boromir_client* client, uint8_t mac[6], uint16_t aid)
 			conn->status = BROADCAST_PREPARED;
 
 			if (!client->prohibit_conn) {
-				struct msg message = {.addr = client->broadcast_addr, make_broadcast(client)};
+				struct msg message = {.addr = client->broadcast_addr, .msg = make_broadcast(client)};
 				if (xQueueSendToFront(client->writing_queue, &message, 2000) == pdTRUE) {
 					conn->status = BROADCAST_SENT;
 					printf("broadcast sent\n");
@@ -177,14 +242,45 @@ void set_child_conn(struct boromir_client* client, uint8_t mac[6], uint16_t aid)
 
 void remove_child_conn(struct boromir_client* client, uint8_t mac[6]) {
 	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
+
+	enum connection_status status = DUMMY;
+
 	for (int i = 0; i < MAX_AP_CONN; i++) {
 		if (client->children_conns[i] != NULL && cmp_mac(client->children_conns[i]->mac, mac)) {
 			printf("deleting child\n");
+			status = client->children_conns[i]->status;
 			free(client->children_conns[i]);
 			client->children_conns[i] = NULL;
 			break;
 		}
 	}
+
+	uint32_t new_roles = client->roles;
+
+	for (int i = 0; i < MAX_AP_CONN; i++) {
+		if (client->children_conns[i] != NULL) {
+			new_roles = new_roles | client->children_conns[i]->roles;
+		}
+	}
+
+	client->tree_roles = new_roles;
+
+	if (client->parent_conn != NULL && (status == ESTABLISHED || status == CONNECT_RECEIVED)) {
+		printf("updating roles\n");
+		uint8_t* msg_id = (uint8_t*)malloc(4 * sizeof(uint8_t));
+		rand_bytes(msg_id, 4);
+		struct msg* message = (struct msg*)malloc(sizeof(struct msg));
+		message->addr = client->parent_conn->cliaddr;
+		memcpy(message->dest_ssid, client->parent_conn->ssid, client->parent_conn->ssid_len);
+		message->ssid_len = client->parent_conn->ssid_len;
+		message->type = ROLE_UPD;
+		message->msg = make_role_update(client, msg_id);
+		if (xQueueSendToFront(client->writing_queue, message, 2000) != pdTRUE) {
+			free(message->msg);
+		}
+		hashmap_set(client->critical_msg, msg_id, 4, (uintptr_t)(void*)message);
+	}
+
 	xSemaphoreGive(client->conn_mutex);
 }
 
@@ -203,15 +299,43 @@ void set_parent_conn(struct boromir_client* client, uint8_t* ssid, uint8_t ssid_
 void remove_parent_conn(struct boromir_client* client) {
 	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
 	printf("deleting parent\n");
+
+	enum connection_status status = DUMMY;
+
+	if (client->parent_conn != NULL) {
+		status = client->parent_conn->status;
+	}
+
 	free(client->parent_conn);
 	client->parent_conn = NULL;
-	rand_bytes(client->network_id, 4);
+
+	if (status == ESTABLISHED) {
+		rand_bytes(client->network_id, 4);
+
+		for (int i = 0; i < MAX_AP_CONN; i++) {
+			if (client->children_conns[i] != NULL && client->children_conns[i]->status == ESTABLISHED) {
+				uint8_t* msg_id = (uint8_t*)malloc(4 * sizeof(uint8_t));
+				rand_bytes(msg_id, 4);
+				struct msg* message = (struct msg*)malloc(sizeof(struct msg));
+				message->addr = client->children_conns[i]->cliaddr;
+				memcpy(message->dest_ssid, client->children_conns[i]->ssid, client->children_conns[i]->ssid_len);
+				message->ssid_len = client->children_conns[i]->ssid_len;
+				message->type = NET_ID_UPD;
+				message->msg = make_net_id_update(client, msg_id);
+				if (xQueueSendToFront(client->writing_queue, message, 2000) != pdTRUE) {
+					free(message->msg);
+				}
+				hashmap_set(client->critical_msg, msg_id, 4, (uintptr_t)(void*)message);
+			}
+		}
+	}
+
 	xSemaphoreGive(client->conn_mutex);
 }
 
 void process_broadcast(struct boromir_client* client, struct message* msg) {
 	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
-	printf("processing broadcast\n");
+	printf("processing broadcast from %.9s\n", msg->sender_ssid);
 
 	if (client->parent_conn != NULL &&
 		cmp_slices(client->parent_conn->ssid, client->parent_conn->ssid_len,
@@ -220,7 +344,6 @@ void process_broadcast(struct boromir_client* client, struct message* msg) {
 			if (!cmp_slices(client->network_id, 4, msg->network_id, 4)) {
 				if (!has_conn(client->children_conns, msg->sender_mac) || cmp_order(&client->order, 1, &msg->order, 1) > 0) {
 
-					printf("%u\n", msg->ip);
 					client->parent_conn->cliaddr.sin_family = AF_INET;
 					client->parent_conn->cliaddr.sin_addr.s_addr = msg->ip;
 					client->parent_conn->cliaddr.sin_port = htons(PORT);
@@ -229,7 +352,7 @@ void process_broadcast(struct boromir_client* client, struct message* msg) {
 
 					client->prohibit_conn = 1;
 
-					struct msg message = {.addr = client->parent_conn->cliaddr, make_connect(client)};
+					struct msg message = {.addr = client->parent_conn->cliaddr, .msg = make_connect(client)};
 					if (xQueueSendToFront(client->writing_queue, &message, 2000) == pdTRUE) {
 						client->parent_conn->status = CONNECT_SENT;
 						printf("connect sent\n");
@@ -250,9 +373,11 @@ void process_broadcast(struct boromir_client* client, struct message* msg) {
 	xSemaphoreGive(client->conn_mutex);
 }
 
+//TODO: стоит переместить добавление ролей в часть с established
+
 void process_connect(struct boromir_client* client, struct message* msg) {
 	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
-	printf("processing connect\n");
+	printf("processing connect from %.9s\n", msg->sender_ssid);
 	for (int i = 0; i < MAX_AP_CONN; i++) {
 		if (client->children_conns[i] != NULL && cmp_mac(client->children_conns[i]->mac, msg->sender_mac)) {
 			if (client->children_conns[i]->status == BROADCAST_SENT) {
@@ -267,8 +392,10 @@ void process_connect(struct boromir_client* client, struct message* msg) {
 				client->children_conns[i]->ssid_len = msg->ssid_len;
 				memcpy(client->children_conns[i]->ssid, msg->sender_ssid, msg->ssid_len);
 
+				client->tree_roles = client->tree_roles | msg->roles;
+
 				if (!client->prohibit_conn) {
-					struct msg message = {.addr = client->children_conns[i]->cliaddr, make_established(client)};
+					struct msg message = {.addr = client->children_conns[i]->cliaddr, .msg = make_established(client)};
 					if (xQueueSendToFront(client->writing_queue, &message, 2000) == pdTRUE) {
 						client->children_conns[i]->status = ESTABLISHED;
 						printf("established sent\n");
@@ -281,12 +408,29 @@ void process_connect(struct boromir_client* client, struct message* msg) {
 			break;
 		}
 	}
+
+	if (client->parent_conn != NULL && client->parent_conn->status == ESTABLISHED) {
+		printf("updating roles\n");
+		uint8_t* msg_id = (uint8_t*)malloc(4 * sizeof(uint8_t));
+		rand_bytes(msg_id, 4);
+		struct msg* message = (struct msg*)malloc(sizeof(struct msg));
+		message->addr = client->parent_conn->cliaddr;
+		memcpy(message->dest_ssid, client->parent_conn->ssid, client->parent_conn->ssid_len);
+		message->ssid_len = client->parent_conn->ssid_len;
+		message->type = ROLE_UPD;
+		message->msg = make_role_update(client, msg_id);
+		if (xQueueSendToFront(client->writing_queue, message, 2000) != pdTRUE) {
+			free(message->msg);
+		}
+		hashmap_set(client->critical_msg, msg_id, 4, (uintptr_t)(void*)message);
+	}
+
 	xSemaphoreGive(client->conn_mutex);
 }
 
 void process_establishing(struct boromir_client* client, struct message* msg) {
 	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
-	printf("processing establishing\n");
+	printf("processing establishing from %.9s\n", msg->sender_ssid);
 	if (client->parent_conn != NULL &&
 		cmp_slices(client->parent_conn->ssid, client->parent_conn->ssid_len,
 			msg->sender_ssid, msg->ssid_len)) {
@@ -296,6 +440,24 @@ void process_establishing(struct boromir_client* client, struct message* msg) {
 			memcpy(client->network_id, msg->network_id, 4);
 			client->prohibit_conn = 0;
 			client->parent_conn->status = ESTABLISHED;
+
+			printf("updating net_id after establishing\n");
+			for (int i = 0; i < MAX_AP_CONN; i++) {
+				if (client->children_conns[i] != NULL && client->children_conns[i]->status == ESTABLISHED) {
+					uint8_t* msg_id = (uint8_t*)malloc(4 * sizeof(uint8_t));
+					rand_bytes(msg_id, 4);
+					struct msg* message = (struct msg*)malloc(sizeof(struct msg));
+					message->addr = client->children_conns[i]->cliaddr;
+					memcpy(message->dest_ssid, client->children_conns[i]->ssid, client->children_conns[i]->ssid_len);
+					message->ssid_len = client->children_conns[i]->ssid_len;
+					message->type = NET_ID_UPD;
+					message->msg = make_net_id_update(client, msg_id);
+					if (xQueueSendToFront(client->writing_queue, message, 2000) != pdTRUE) {
+						free(message->msg);
+					}
+					hashmap_set(client->critical_msg, msg_id, 4, (uintptr_t)(void*)message);
+				}
+			}
 		}
 	}
 	xSemaphoreGive(client->conn_mutex);
@@ -303,7 +465,7 @@ void process_establishing(struct boromir_client* client, struct message* msg) {
 
 void process_beacon_answ(struct boromir_client* client, struct message* msg) {
 	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
-	printf("processing beacon answ\n");
+	printf("processing beacon answ from %.9s\n", msg->sender_ssid);
 	for (int i = 0; i < MAX_AP_CONN; i++) {
 		if (client->children_conns[i] != NULL &&
 				cmp_slices(client->children_conns[i]->ssid, client->children_conns[i]->ssid_len,
@@ -319,12 +481,12 @@ void process_beacon_answ(struct boromir_client* client, struct message* msg) {
 
 void process_beacon(struct boromir_client* client, struct message* msg) {
 	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
-	printf("processing beacon\n");
+	printf("processing beacon from %.9s\n", msg->sender_ssid);
 	if (client->parent_conn != NULL &&
 			cmp_slices(client->parent_conn->ssid, client->parent_conn->ssid_len,
 					msg->sender_ssid, msg->ssid_len)) {
 		if (client->parent_conn->status == ESTABLISHED) {
-			struct msg message = {.addr = client->parent_conn->cliaddr, make_beacon_answ(client)};
+			struct msg message = {.addr = client->parent_conn->cliaddr, .msg = make_beacon_answ(client)};
 			if (xQueueSendToBack(client->writing_queue, &message, 2000) == pdTRUE) {
 				printf("sent beacon answ\n");
 			} else {
@@ -333,5 +495,119 @@ void process_beacon(struct boromir_client* client, struct message* msg) {
 			client->parent_conn->timestamp = (uint32_t)xTaskGetTickCount();
 		}
 	}
+	xSemaphoreGive(client->conn_mutex);
+}
+
+void process_recv_answ(struct boromir_client* client, struct message* msg) {
+	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
+	printf("processing recv answ from %.9s\n", msg->sender_ssid);
+
+	uintptr_t v;
+	bool res = hashmap_get(client->critical_msg, msg->msg_id, 4, &v);
+	if (!res) {
+		return;
+	}
+	printf("removing after receiving answ\n");
+	hashmap_remove_free(client->critical_msg, msg->msg_id, 4, free_map_entry, NULL);
+
+	xSemaphoreGive(client->conn_mutex);
+}
+
+void process_net_id_upd(struct boromir_client* client, struct message* msg) {
+	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
+	printf("processing net id upd from %.9s\n", msg->sender_ssid);
+
+	if (client->parent_conn != NULL &&
+			client->parent_conn->status == ESTABLISHED &&
+			cmp_slices(msg->sender_ssid, msg->ssid_len, client->parent_conn->ssid, client->parent_conn->ssid_len)) {
+
+		memcpy(client->network_id, msg->network_id, 4);
+
+		struct msg* message = (struct msg*)malloc(sizeof(struct msg));
+		message->addr = client->parent_conn->cliaddr;
+		message->msg = make_recv_answ(client, msg->msg_id);
+		if (xQueueSendToBack(client->writing_queue, message, 2000) == pdTRUE) {
+			printf("sent recv answ\n");
+		} else {
+			free(message->msg);
+		}
+		free(message);
+
+		printf("updating net_id from upd msg\n");
+		for (int i = 0; i < MAX_AP_CONN; i++) {
+			if (client->children_conns[i] != NULL && client->children_conns[i]->status == ESTABLISHED) {
+				uint8_t* msg_id = (uint8_t*)malloc(4 * sizeof(uint8_t));
+				rand_bytes(msg_id, 4);
+				struct msg* message = (struct msg*)malloc(sizeof(struct msg));
+				message->addr = client->children_conns[i]->cliaddr;
+				memcpy(message->dest_ssid, client->children_conns[i]->ssid, client->children_conns[i]->ssid_len);
+				message->ssid_len = client->children_conns[i]->ssid_len;
+				message->type = NET_ID_UPD;
+				message->msg = make_net_id_update(client, msg_id);
+				if (xQueueSendToFront(client->writing_queue, message, 2000) != pdTRUE) {
+					free(message->msg);
+				}
+				hashmap_set(client->critical_msg, msg_id, 4, (uintptr_t)(void*)message);
+			}
+		}
+	}
+
+	xSemaphoreGive(client->conn_mutex);
+}
+
+//TODO: не отправляется подтверждение ни здесь, ни в net id upd
+
+void process_role_upd(struct boromir_client* client, struct message* msg) {
+	xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
+	printf("processing role upd from %.9s\n", msg->sender_ssid);
+	int ind = -1;
+	for (int i = 0; i < MAX_AP_CONN; i++) {
+		if (client->children_conns[i] != NULL && client->children_conns[i]->status == ESTABLISHED &&
+				cmp_slices(client->children_conns[i]->ssid, client->children_conns[i]->ssid_len,
+						msg->sender_ssid, msg->ssid_len)) {
+			client->children_conns[i]->roles = msg->roles;
+			ind = i;
+			break;
+		}
+	}
+
+	if (ind != -1) {
+		struct msg* message = (struct msg*)malloc(sizeof(struct msg));
+		message->addr = client->children_conns[ind]->cliaddr;
+		message->msg = make_recv_answ(client, msg->msg_id);
+		if (xQueueSendToBack(client->writing_queue, message, 2000) == pdTRUE) {
+			printf("sent recv answ\n");
+		} else {
+			free(message->msg);
+		}
+		free(message);
+	} else {
+		return;
+	}
+
+	uint32_t new_roles = client->roles;
+	for (int i = 0; i < MAX_AP_CONN; i++) {
+		if (client->children_conns[i] != NULL) {
+			new_roles = new_roles | client->children_conns[i]->roles;
+		}
+	}
+	client->tree_roles = new_roles;
+
+	if (client->parent_conn != NULL && client->parent_conn->status == ESTABLISHED) {
+		printf("updating roles\n");
+		uint8_t* msg_id = (uint8_t*)malloc(4 * sizeof(uint8_t));
+		rand_bytes(msg_id, 4);
+		struct msg* message = (struct msg*)malloc(sizeof(struct msg));
+		message->addr = client->parent_conn->cliaddr;
+		memcpy(message->dest_ssid, client->parent_conn->ssid, client->parent_conn->ssid_len);
+		message->ssid_len = client->parent_conn->ssid_len;
+		message->type = ROLE_UPD;
+		message->msg = make_role_update(client, msg_id);
+		if (xQueueSendToFront(client->writing_queue, message, 2000) != pdTRUE) {
+			free(message->msg);
+		}
+		hashmap_set(client->critical_msg, msg_id, 4, (uintptr_t)(void*)message);
+	}
+
 	xSemaphoreGive(client->conn_mutex);
 }

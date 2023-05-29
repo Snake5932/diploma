@@ -7,16 +7,21 @@
 #include "lwip/sockets.h"
 #include "queue.h"
 #include "config.h"
+#include "map.h"
 
 enum message_type {
 	BROADCAST,
 	CONNECT,
 	ESTABLISHING,
 	BEACON,
-	BEACON_ANSW
+	BEACON_ANSW,
+	ROLE_UPD,
+	NET_ID_UPD,
+	RECV_ANSW
 };
 
 enum connection_status {
+	DUMMY,
 	ESTABLISHED,
 	//статусы ap для sta
 	BROADCAST_PREPARED,
@@ -38,6 +43,7 @@ struct message {
 	uint8_t network_id[4];
 	uint32_t roles;
 	uint32_t ip;
+	uint8_t msg_id[4];
 	char err;
 };
 
@@ -48,6 +54,7 @@ struct boromir_client {
 	char prohibit_conn;
 	uint8_t network_id[4];
 	uint32_t roles;
+	uint32_t tree_roles;
 	struct sockaddr_in broadcast_addr;
 	SemaphoreHandle_t conn_mutex;
 	xQueueHandle writing_queue;
@@ -57,10 +64,14 @@ struct boromir_client {
 	struct connection* children_conns[MAX_AP_CONN];
 	struct connection* parent_conn;
 	uint8_t order;
+	hashmap* critical_msg;
 };
 
 struct msg {
 	struct sockaddr_in addr;
+	enum message_type type;
+	uint8_t dest_ssid[32];
+	uint8_t ssid_len;
 	char* msg;
 };
 
@@ -74,6 +85,8 @@ struct connection {
 	uint32_t roles;
 	enum connection_status status;
 };
+
+void resend_critical(void* key, size_t ksize, uintptr_t value, void* usr);
 
 struct boromir_client* new_boromir_client(uint32_t roles);
 
@@ -104,5 +117,11 @@ void process_establishing(struct boromir_client* client, struct message* msg);
 void process_beacon(struct boromir_client* client, struct message* msg);
 
 void process_beacon_answ(struct boromir_client* client, struct message* msg);
+
+void process_recv_answ(struct boromir_client* client, struct message* msg);
+
+void process_net_id_upd(struct boromir_client* client, struct message* msg);
+
+void process_role_upd(struct boromir_client* client, struct message* msg);
 
 #endif

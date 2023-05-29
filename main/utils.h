@@ -22,4 +22,6 @@ char cmp_order(uint8_t *o1, uint8_t len1, uint8_t* o2, uint8_t len2);
 
 char has_conn(struct connection** conns, uint8_t* mac);
 
+void free_map_entry(void* key, size_t ksize, uintptr_t value, void* usr);
+
 #endif

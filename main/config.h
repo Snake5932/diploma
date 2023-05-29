@@ -8,8 +8,9 @@
 #define SSID "boromir-1"
 #define SSID_PREFIX "boromir"
 #define WIFI_PASS "111111111"
-#define MAX_AP_CONN 4
+#define MAX_AP_CONN 1
 #define PORT 5555
 #define ORDER 10
+#define RAND_SEED 234534862
 
 #endif

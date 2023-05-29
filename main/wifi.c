@@ -40,6 +40,7 @@ static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
 		printf("sta connected to ap\n");
 
+		//чтобы dhcp успевал отработать
 		vTaskDelay(100);
 		wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*)event_data;
 		set_child_conn(client, event->mac, event->aid);
@@ -62,7 +63,7 @@ void connect_to_ap(void *pvParameters) {
 	int bad_conn_len = get_queue_len(client->bad_conns);
 	int i = 0;
 	while (i < bad_conn_len &&
-			(uint32_t)xTaskGetTickCount() - ((struct bad_conn*)peek(client->bad_conns))->timestamp > 2000 ) {
+			(uint32_t)xTaskGetTickCount() - ((struct bad_conn*)peek(client->bad_conns))->timestamp > 5000 ) {
 		struct bad_conn* ptr = (struct bad_conn*)dequeue(client->bad_conns);
 		printf("deleting from queue as expired: %.20s\n", ptr->ssid);
 		free(ptr);
@@ -176,8 +177,6 @@ esp_err_t wifi_init(struct boromir_client* client) {
 	ESP_ERROR_CHECK(tcpip_adapter_dhcps_start(TCPIP_ADAPTER_IF_AP));
 
 	ESP_ERROR_CHECK(esp_wifi_start());
-
-	//ESP_ERROR_CHECK(esp_wifi_set_inactive_time(ESP_IF_WIFI_AP, 20));
 
 	return ESP_OK;
 }
