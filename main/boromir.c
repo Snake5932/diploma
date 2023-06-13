@@ -28,6 +28,8 @@ void parse_message(char* msg, uint32_t size, struct message* res) {
 		parse_recv_answ(msg, (uint8_t)size, res);
 	} else if ((msg[0] & 0x0F) == 0x09) {
 		parse_basic_role_v(msg, (uint8_t)size, res);
+	} else if ((msg[0] & 0x0F) == 0x0A) {
+		parse_basic_ssid_v(msg, (uint8_t)size, res);
 	} else {
 		res->err = 1;
 	}
@@ -190,8 +192,36 @@ void parse_basic_role_v(char* msg, uint8_t size, struct message* res) {
 	res->ssid_len = msg[2];
 	memcpy(res->sender_ssid, &msg[3], res->ssid_len);
 	uint8_t cur_pos = 3 + res->ssid_len;
+	res->init_ssid_len = msg[cur_pos];
+	memcpy(res->init_sender_ssid, &msg[cur_pos + 1], res->init_ssid_len);
+	cur_pos = cur_pos + 1 + res->init_ssid_len;
 	memcpy(&res->roles, &msg[cur_pos], 4);
 	cur_pos = cur_pos + 4;
+	res->data_len = msg[cur_pos];
+	res->data = (uint8_t*)malloc(res->data_len * sizeof(uint8_t));
+	memcpy(res->data, &msg[cur_pos + 1], res->data_len);
+}
+
+void parse_basic_ssid_v(char* msg, uint8_t size, struct message* res) {
+	res->type = BASIC_ROLE_V;
+	if ((msg[0] & (1 << 6)) != 0) {
+		res->must_be_answered = 1;
+	} else {
+		res->must_be_answered = 0;
+	}
+	if (size != msg[1]) {
+		res->err = 1;
+		return;
+	}
+	res->ssid_len = msg[2];
+	memcpy(res->sender_ssid, &msg[3], res->ssid_len);
+	uint8_t cur_pos = 3 + res->ssid_len;
+	res->init_ssid_len = msg[cur_pos];
+	memcpy(res->init_sender_ssid, &msg[cur_pos + 1], res->init_ssid_len);
+	cur_pos = cur_pos + 1 + res->init_ssid_len;
+	res->dest_ssid_len = msg[cur_pos];
+	memcpy(res->dest_ssid, &msg[cur_pos + 1], res->dest_ssid_len);
+	cur_pos = cur_pos + 1 + res->dest_ssid_len;
 	res->data_len = msg[cur_pos];
 	res->data = (uint8_t*)malloc(res->data_len * sizeof(uint8_t));
 	memcpy(res->data, &msg[cur_pos + 1], res->data_len);
@@ -357,8 +387,8 @@ char* make_recv_answ(struct boromir_client* client, uint8_t msg_id[4]) {
 	return msg;
 }
 
-char* make_basic_role_v(uint8_t* dest_ssid, uint8_t ssid_len, uint32_t dest_role, uint8_t* data, uint8_t data_len) {
-	uint32_t size = 3 + ssid_len + 5 + data_len;
+char* make_basic_role_v(uint8_t* sender_ssid, uint8_t ssid_len, uint8_t* init_sender_ssid, uint8_t init_ssid_len, uint32_t dest_role, uint8_t* data, uint8_t data_len) {
+	uint32_t size = 3 + ssid_len + 1 + init_ssid_len + 5 + data_len;
 	if (size > 255) {
 		return NULL;
 	}
@@ -368,10 +398,32 @@ char* make_basic_role_v(uint8_t* dest_ssid, uint8_t ssid_len, uint32_t dest_role
 	msg[1] = (uint8_t)size;
 	//длина и ssid отправителя
 	msg[2] = ssid_len;
-	memcpy(&msg[3], dest_ssid, ssid_len);
+	memcpy(&msg[3], sender_ssid, ssid_len);
 	uint8_t cur_pos = 3 + ssid_len;
+	memcpy(&msg[3], init_sender_ssid, init_ssid_len);
+	uint8_t cur_pos = 1 + init_ssid_len;
 	memcpy(&msg[cur_pos], &dest_role, 4);
 	cur_pos = cur_pos + 4;
+	msg[cur_pos] = data_len;
+	memcpy(&msg[cur_pos + 1], data, data_len);
+	return msg;
+}
+
+char* make_basic_ssid_v(uint8_t* sender_ssid, uint8_t ssid_len, uint8_t* init_sender_ssid, uint8_t init_ssid_len, uint8_t* dest_ssid, uint8_t dest_ssid_len, uint8_t* data, uint8_t data_len) {
+	uint32_t size = 3 + ssid_len + 1 + init_ssid_len + 1 + dest_ssid_len + 1 + data_len;
+	if (size > 255) {
+		return NULL;
+	}
+	char* msg = (char*)malloc(size * sizeof(char));
+	msg[0] = 0x0A;
+	msg[1] = (uint8_t)size;
+	msg[2] = ssid_len;
+	memcpy(&msg[3], sender_ssid, ssid_len);
+	uint8_t cur_pos = 3 + ssid_len;
+	memcpy(&msg[3], init_sender_ssid, init_ssid_len);
+	uint8_t cur_pos = 1 + init_ssid_len;
+	memcpy(&msg[cur_pos], &dest_ssid, dest_ssid_len);
+	cur_pos = cur_pos + 1 + dest_ssid_len;
 	msg[cur_pos] = data_len;
 	memcpy(&msg[cur_pos + 1], data, data_len);
 	return msg;

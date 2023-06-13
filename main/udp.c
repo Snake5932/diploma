@@ -61,6 +61,8 @@ void udp_receiver(void *pvParameters) {
 	    			process_recv_answ(client, &msg);
 	    		} else if (msg.type == BASIC_ROLE_V) {
 	    			process_basic_role_v(client, &msg);
+	    		} else if (msg.type == BASIC_SSID_V) {
+	    			process_basic_ssid_v(client, &msg);
 	    		} else {
 	    			printf("unknown message type\n");
 	    		}

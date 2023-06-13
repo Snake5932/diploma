@@ -20,7 +20,7 @@ void app_main() {
     start_client(client);
     set_callback(client, handler, NULL);
     for(;;) {
-    	send_msg(client, (uint8_t[]){'a', 'a', 'a', 'a', 'a'}, 5, 1 << 5, NULL, 0);
+    	send_msg(client, (uint8_t[]){'f', 'r', 'o', 'm', ' ', '1', ' ', 't', 'o', ' ', 'b', 'i', 't', ' ', '5'}, 15, 1 << 5, NULL, 0);
     	vTaskDelay(2000);
     }
 }

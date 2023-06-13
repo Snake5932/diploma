@@ -20,7 +20,8 @@ enum message_type {
 	ROLE_UPD,
 	NET_ID_UPD,
 	RECV_ANSW,
-	BASIC_ROLE_V
+	BASIC_ROLE_V,
+	BASIC_SSID_V
 };
 
 enum connection_status {
@@ -41,6 +42,8 @@ struct message {
 	char must_be_answered;
 	uint8_t sender_ssid[32];
 	uint8_t ssid_len;
+	uint8_t init_sender_ssid[32];
+	uint8_t init_ssid_len;
 	uint8_t sender_mac[6];
 	uint8_t order;
 	uint8_t network_id[4];
@@ -49,6 +52,8 @@ struct message {
 	uint8_t msg_id[4];
 	uint8_t* data;
 	uint8_t data_len;
+	uint8_t dest_ssid[32];
+	uint8_t dest_ssid_len;
 	char err;
 };
 
@@ -137,6 +142,8 @@ void process_net_id_upd(struct boromir_client* client, struct message* msg);
 void process_role_upd(struct boromir_client* client, struct message* msg);
 
 void process_basic_role_v(struct boromir_client* client, struct message* msg);
+
+void process_basic_ssid_v(struct boromir_client* client, struct message* msg);
 
 void send_msg(struct boromir_client* client, uint8_t* data, uint8_t data_len, uint32_t role, char* dest_name, int dest_name_len);
 
