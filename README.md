@@ -8,6 +8,67 @@
 
 ## Инструкция по настройке среды для запуска и прошивке
 
+### Установка toolchain
+
+Перед установкой необходимо выполнить следующую команду:
+
+```bash
+sudo apt-get install gcc git wget make libncurses-dev flex bison gperf python python-serial
+```
+
+Отметим, что здесь и далее используется Python2.7, а не Python3.
+
+Далее необходимо скачать сам toolchain, [для 64 битной](https://dl.espressif.com/dl/xtensa-lx106-elf-gcc8_4_0-esp-2020r3-linux-amd64.tar.gz), [для 32 битной](https://dl.espressif.com/dl/xtensa-lx106-elf-gcc8_4_0-esp-2020r3-linux-i686.tar.gz).
+
+Архив необходимо распаковать в папку ~/esp.
+
+Далее обновим переменную PATH:
+
+```bash
+export PATH="$PATH:$HOME/esp/xtensa-lx106-elf/bin"
+```
+
+Также необходимо получить права на использование порта USB, сделать это можно двумя способами:
+
+```bash
+sudo usermod -a -G dialout $USER
+```
+или (пример для /dev/ttyUSB0)
+
+```bash
+sudo chmod -R 777 /dev/ttyUSB0
+```
+
+### Установка SDK
+
+Чтобы установить SDK выполним следующие команды:
+
+```bash
+cd ~/esp
+git clone --recursive https://github.com/espressif/ESP8266_RTOS_SDK.git
+```
+
+Далее необходимо определить переменную окружения для SDK, назовем ее IDF_PATH, она должна указывать на ~/esp/ESP8266_RTOS_SDK
+
+Установим необходимые пакеты для сборки:
+
+```bash
+python -m pip install --user -r $IDF_PATH/requirements.txt
+```
+
+### Прошивка
+
+Чтобы прошить микроконтроллер, необходимо папку с проектом перенести в директорию ~/esp.
+
+Далее, перейдя в папку проекта, необходимо выполнить команду make menuconfig и перейти к Serial flasher config > Default serial port.
+Там необходимо вписать нужный порт, сохранить и выйти.
+
+После этого можно прошить микроконтроллер командой make flash.
+
+С помощью команды make monitor можно следить за работой микроконтроллера из консоли.
+
+Команды выше можно объединить с помощью make flash monitor.
+
 ## Инструкция к функциям клиента
 
 ### Конфигурация
