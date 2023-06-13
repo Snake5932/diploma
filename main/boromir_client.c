@@ -359,10 +359,10 @@ void process_broadcast(struct boromir_client* client, struct message* msg) {
 					client->parent_conn->timestamp = (uint32_t)xTaskGetTickCount();
 
 				} else {
-					//TODO: disconnect?
+					esp_wifi_disconnect();
 				}
 			} else {
-				//TODO: disconnect?
+				esp_wifi_disconnect();
 			}
 		}
 	}
@@ -654,7 +654,7 @@ void process_basic_role_v(struct boromir_client* client, struct message* msg) {
 	xSemaphoreGive(client->conn_mutex);
 
 	if (ind != 0) {
-		struct msg message = {.addr = addr, .msg = make_basic_role_v(client->client_ssid, client->ssid_len, msg->sender_ssid, msg->ssid_len, msg->roles, msg->data, msg->data_len)};
+		struct msg message = {.addr = addr, .msg = make_basic_role_v(client->client_ssid, client->ssid_len, msg->init_sender_ssid, msg->init_ssid_len, msg->roles, msg->data, msg->data_len)};
 		free(msg->data);
 		if (xQueueSendToBack(client->writing_queue, &message, 2000) != pdTRUE) {
 			free(message.msg);
@@ -669,7 +669,7 @@ void process_basic_role_v(struct boromir_client* client, struct message* msg) {
 }
 
 void process_basic_ssid_v(struct boromir_client* client, struct message* msg) {
-	printf("processing basic role v from %.9s\n", msg->sender_ssid);
+	printf("processing basic ssid v from %.9s\n", msg->sender_ssid);
 	struct handler_data* data = (struct handler_data*)malloc(sizeof(struct handler_data));
 	data->usr = client->usr;
 	data->event_data = msg->data;
@@ -691,12 +691,12 @@ void process_basic_ssid_v(struct boromir_client* client, struct message* msg) {
 		if (client->children_conns[i] != NULL && client->children_conns[i]->status == ESTABLISHED &&
 				!cmp_slices(client->children_conns[i]->ssid, client->children_conns[i]->ssid_len,
 										msg->sender_ssid, msg->ssid_len)) {
-			struct msg message = {.addr = client->children_conns[i]->cliaddr, .msg = make_basic_ssid_v(client->client_ssid, client->ssid_len, msg->sender_ssid, msg->ssid_len, msg->dest_ssid, msg->dest_ssid_len, msg->data, msg->data_len)};
+			struct msg message = {.addr = client->children_conns[i]->cliaddr, .msg = make_basic_ssid_v(client->client_ssid, client->ssid_len, msg->init_sender_ssid, msg->init_ssid_len, msg->dest_ssid, msg->dest_ssid_len, msg->data, msg->data_len)};
 			free(msg->data);
 			if (xQueueSendToBack(client->writing_queue, &message, 2000) != pdTRUE) {
 				free(message.msg);
 			} else {
-				printf("sent basic message with dest\n");
+				printf("sent dest message\n");
 			}
 		}
 	}
@@ -705,19 +705,19 @@ void process_basic_ssid_v(struct boromir_client* client, struct message* msg) {
 			client->parent_conn->status == ESTABLISHED &&
 				!cmp_slices(client->parent_conn->ssid, client->parent_conn->ssid_len,
 											msg->sender_ssid, msg->ssid_len)) {
-		struct msg message = {.addr = client->parent_conn->cliaddr, .msg = make_basic_ssid_v(client->client_ssid, client->ssid_len, msg->sender_ssid, msg->ssid_len, msg->dest_ssid, msg->dest_ssid_len, msg->data, msg->data_len)};
+		struct msg message = {.addr = client->parent_conn->cliaddr, .msg = make_basic_ssid_v(client->client_ssid, client->ssid_len, msg->init_sender_ssid, msg->init_ssid_len, msg->dest_ssid, msg->dest_ssid_len, msg->data, msg->data_len)};
 		free(msg->data);
 		if (xQueueSendToBack(client->writing_queue, &message, 2000) != pdTRUE) {
 			free(message.msg);
 		} else {
-			printf("sent basic message with dest\n");
+			printf("sent dest message to parent\n");
 		}
 	}
 
 	xSemaphoreGive(client->conn_mutex);
 }
 
-void send_msg(struct boromir_client* client, uint8_t* data, uint8_t data_len, uint32_t role, char* dest_name, int dest_name_len) {
+void send_msg(struct boromir_client* client, uint8_t* data, uint8_t data_len, uint32_t role, uint8_t* dest_name, uint8_t dest_name_len) {
 	if (role == 0) {
 		xSemaphoreTake(client->conn_mutex, portMAX_DELAY);
 

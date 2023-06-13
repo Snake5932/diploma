@@ -1,3 +1,11 @@
 /build/
 
 /.settings/
+
+.project
+
+.cproject
+
+sdkconfig
+
+sdkconfig.old

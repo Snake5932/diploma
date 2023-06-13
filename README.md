@@ -105,7 +105,7 @@ struct boromir_client* new_boromir_client(uint32_t roles);
 
 void start_client(struct boromir_client* client);
 
-void send_msg(struct boromir_client* client, uint8_t* data, uint8_t data_len, uint32_t role, char* dest_name, int dest_name_len);
+void send_msg(struct boromir_client* client, uint8_t* data, uint8_t data_len, uint32_t role, uint8_t* dest_name, uint8_t dest_name_len);
 
 void set_callback(struct boromir_client* client, boromir_event_handler_t event_handler, void* usr);
 

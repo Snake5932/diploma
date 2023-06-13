@@ -2,8 +2,6 @@
 #include "boromir_client.h"
 #include "tcpip_adapter.h"
 
-//TODO: был прецедент падения программы при ошибке парсинга
-
 void parse_message(char* msg, uint32_t size, struct message* res) {
 	res->err = 0;
 	if (msg == NULL || size > 255 || size < 2) {
@@ -203,7 +201,7 @@ void parse_basic_role_v(char* msg, uint8_t size, struct message* res) {
 }
 
 void parse_basic_ssid_v(char* msg, uint8_t size, struct message* res) {
-	res->type = BASIC_ROLE_V;
+	res->type = BASIC_SSID_V;
 	if ((msg[0] & (1 << 6)) != 0) {
 		res->must_be_answered = 1;
 	} else {
@@ -393,15 +391,15 @@ char* make_basic_role_v(uint8_t* sender_ssid, uint8_t ssid_len, uint8_t* init_se
 		return NULL;
 	}
 	char* msg = (char*)malloc(size * sizeof(char));
-	//тип 0x09 - универсальный ответ
 	msg[0] = 0x09;
 	msg[1] = (uint8_t)size;
 	//длина и ssid отправителя
 	msg[2] = ssid_len;
 	memcpy(&msg[3], sender_ssid, ssid_len);
 	uint8_t cur_pos = 3 + ssid_len;
-	memcpy(&msg[3], init_sender_ssid, init_ssid_len);
-	uint8_t cur_pos = 1 + init_ssid_len;
+	msg[cur_pos] = init_ssid_len;
+	memcpy(&msg[cur_pos + 1], init_sender_ssid, init_ssid_len);
+	cur_pos = cur_pos + 1 + init_ssid_len;
 	memcpy(&msg[cur_pos], &dest_role, 4);
 	cur_pos = cur_pos + 4;
 	msg[cur_pos] = data_len;
@@ -417,13 +415,19 @@ char* make_basic_ssid_v(uint8_t* sender_ssid, uint8_t ssid_len, uint8_t* init_se
 	char* msg = (char*)malloc(size * sizeof(char));
 	msg[0] = 0x0A;
 	msg[1] = (uint8_t)size;
+
 	msg[2] = ssid_len;
 	memcpy(&msg[3], sender_ssid, ssid_len);
 	uint8_t cur_pos = 3 + ssid_len;
-	memcpy(&msg[3], init_sender_ssid, init_ssid_len);
-	uint8_t cur_pos = 1 + init_ssid_len;
-	memcpy(&msg[cur_pos], &dest_ssid, dest_ssid_len);
+
+	msg[cur_pos] = init_ssid_len;
+	memcpy(&msg[cur_pos + 1], init_sender_ssid, init_ssid_len);
+	cur_pos = cur_pos + 1 + init_ssid_len;
+
+	msg[cur_pos] = dest_ssid_len;
+	memcpy(&msg[cur_pos + 1], dest_ssid, dest_ssid_len);
 	cur_pos = cur_pos + 1 + dest_ssid_len;
+
 	msg[cur_pos] = data_len;
 	memcpy(&msg[cur_pos + 1], data, data_len);
 	return msg;
